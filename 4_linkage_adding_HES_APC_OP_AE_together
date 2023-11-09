@@ -1,0 +1,154 @@
+/*************************************************************/
+-- Linking together HES APC, OP, AE tables together 
+
+-- https://digital.nhs.uk/binaries/content/assets/legacy/pdf/r/q/hes-ons_linked_mortality_data_guide.pdf using page 8 a variable named match rank was added
+--
+--Author: Sacha Wyke
+--QA:Tbc
+--date 21/07/2021
+/*************************************************************/
+
+
+--- Add all results tables together
+IF OBJECT_ID(
+'[table1].[dbo].[linked_all_match_rank]'
+) IS NOT NULL DROP TABLE [table1].[dbo].[linked_all_match_rank]; 
+
+
+select distinct [id]
+      ,[nhs_number]
+      ,[dob]
+      ,[postcode]
+      ,[sex]
+      ,[order_date]
+      ,[match_rank]
+      ,[linked_hesid]
+	  ,[source]
+INTO [table1].[dbo].[linked_all_match_rank]
+	  from
+(SELECT [id]
+      ,[nhs_number]
+      ,[dob]
+      ,[postcode]
+      ,[sex]
+      ,[order_date]
+      ,[match_rank]
+      ,[linked_hesid], 'APC' as source
+  FROM [table1].[dbo].[linked_apc_match_rank]
+  UNION ALL
+  SELECT [id]
+      ,[nhs_number]
+      ,[dob]
+      ,[postcode]
+      ,[sex]
+      ,[order_date]
+      ,[match_rank]
+      ,[linked_hesid], 'OP' as source
+  FROM [table1].[dbo].[linked_op_match_rank]
+  UNION ALL
+  SELECT [id]
+      ,[nhs_number]
+      ,[dob]
+      ,[postcode]
+      ,[sex]
+      ,[order_date]
+      ,[match_rank]
+      ,[linked_hesid], 'AE' as source
+  FROM [table1].[dbo].[linked_ae_match_rank]) dta;
+
+    --identify dups
+SELECT        id, COUNT(linked_hesid) AS Count
+FROM            (SELECT        id, linked_hesid
+                          FROM            table1.dbo.[linked_all_match_rank]
+                          GROUP BY id, linked_hesid) AS dups
+GROUP BY id
+HAVING        (COUNT(linked_hesid) > 1);
+
+
+
+
+----adding extra columns
+
+ALTER TABLE [table1].[dbo].[linked_all_match_rank] 
+ADD highest_priority INT;
+
+----to include null priority and order dates I'm setting to a high/low number in preparation for the
+----rank calculation otherwise it excludes the nulls from being given a priority
+
+ UPDATE [table1].[dbo].[linked_all_match_rank]
+   SET match_rank = '99'
+ WHERE match_rank is null;
+
+ UPDATE [table1].[dbo].[linked_all_match_rank]
+   SET order_date = '01Jan1900'
+ WHERE order_date is null;
+
+----used https://stackoverflow.com/questions/28625110/sql-update-in-a-select-rank-over-partition-sentence
+----inorder to apply the ranking
+
+MERGE INTO [table1].[dbo].[linked_all_match_rank] t USING
+(SELECT [id]
+      ,[match_rank],
+    RANK() OVER (PARTITION BY [id] ORDER BY match_rank ASC) AS highest_priority
+FROM [table1].[dbo].[linked_all_match_rank]
+GROUP BY [id],
+    match_rank
+) s 
+ON (t.[id] = s.[id]
+AND t.match_rank = s.match_rank) 
+WHEN MATCHED THEN
+  UPDATE SET t.highest_priority = s.highest_priority;
+
+    --select highest priority
+IF OBJECT_ID(
+'[table1].[dbo].[linked_all_match_rank_highest_priority]'
+) IS NOT NULL DROP TABLE [table1].[dbo].[linked_all_match_rank_highest_priority]; 
+
+SELECT       distinct id, nhs_number, dob, postcode, sex, match_rank, linked_hesid, highest_priority, source
+INTO [table1].[dbo].[linked_all_match_rank_highest_priority]
+FROM            table1.dbo.linked_all_match_rank
+WHERE        (highest_priority = '1')
+
+  --identify dups
+IF OBJECT_ID(
+'[table1].[dbo].[linked_all_match_rank_highest_priority_dups]'
+) IS NOT NULL DROP TABLE [table1].[dbo].[linked_all_match_rank_highest_priority_dups];
+
+SELECT        id, COUNT(linked_hesid) AS Count
+INTO table1.dbo.linked_all_match_rank_highest_priority_dups
+FROM            (SELECT        id, linked_hesid
+                          FROM            table1.dbo.linked_all_match_rank_highest_priority
+                          GROUP BY id, linked_hesid) AS dups
+GROUP BY id
+HAVING        (COUNT(linked_hesid) > 1);
+
+
+  -- remove dups
+IF OBJECT_ID(
+'[table1].[dbo].[linked_all_match_rank_highest_priority_dups_removed]'
+) IS NOT NULL DROP TABLE [table1].[dbo].[linked_all_match_rank_highest_priority_dups_removed];
+
+SELECT        distinct id, nhs_number, dob, postcode, sex, match_rank, linked_hesid
+INTO              [table1].dbo.linked_all_match_rank_highest_priority_dups_removed
+FROM            [table1].dbo.linked_all_match_rank_highest_priority;
+
+DELETE FROM [table1].dbo.linked_all_match_rank_highest_priority_dups_removed
+FROM            [table1].dbo.linked_all_match_rank_highest_priority_dups_removed INNER JOIN
+                         [table1].dbo.linked_all_match_rank_highest_priority_dups ON [table1].dbo.linked_all_match_rank_highest_priority_dups_removed.id = [table1].dbo.linked_all_match_rank_highest_priority_dups.id;
+
+---------- Values
+
+SELECT        match_rank, COUNT(id) AS Count
+FROM            [table1].dbo.linked_all_match_rank
+GROUP BY match_rank
+order by match_rank
+
+SELECT        match_rank, COUNT(id) AS Count
+FROM            [table1].dbo.linked_all_match_rank_highest_priority
+GROUP BY match_rank
+order by match_rank
+
+SELECT        match_rank, COUNT(id) AS Count
+FROM            [table1].dbo.linked_all_match_rank_highest_priority_dups_removed
+GROUP BY match_rank
+order by match_rank
