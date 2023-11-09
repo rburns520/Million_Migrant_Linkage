@@ -1,0 +1,126 @@
+-------- LINK TO APC table 
+
+SELECT [ADMIDATE]
+	  ,[ADMIMETH]
+	  ,[EPISTAT] 
+	  ,[EPITYPE]
+	  ,[DISDATE] 
+	  ,[EPIORDER]
+	  ,[EPISTART]
+	  ,[FYEAR]
+	  ,[EPIKEY]
+	  ,[EPIEND]
+	  ,[FIRSTREG]
+	  ,[ADMISORC]
+	  ,[CLASSPAT]
+	  ,[DISMETH]
+	  ,[MAINSPEF]
+	  ,[TRETSPEF]
+	  ,[ENCRYPTED_HESID]
+	  ,[PROCODE]
+	  ,[IMD04]
+	  ,[ETHNOS]
+	  ,[DIAG_01]
+	  ,[DIAG_02]
+	  ,[DIAG_03]
+	  ,[DIAG_04]
+	  ,[DIAG_05]
+	  ,[DIAG_06]
+	  ,[DIAG_07]
+	  ,[DIAG_08]
+	  ,[DIAG_09]
+	  ,[DIAG_10]
+	  ,[DIAG_11]
+	  ,[DIAG_12]
+	  ,[DIAG_13]
+	  ,[DIAG_14]
+	  ,[DIAG_15]
+	  ,[DIAG_16]
+	  ,[DIAG_17]
+	  ,[DIAG_18]
+	  ,[DIAG_19]
+	  ,[DIAG_20]
+
+INTO [table1].dbo.APC_analysis
+FROM [HES_APC].[dbo].[vHES_APC_Flat] 
+WHERE [ENCRYPTED_HESID] IN (SELECT [linked_hesid] FROM [table1].dbo.linked_all_match_rank_highest_priority_dups_removed)
+AND [EPISTAT] = '3' AND [FYEAR] BETWEEN '0405' AND '2223'
+
+SELECT [table1].dbo.APC_analysis.ADMIDATE, [table1].dbo.APC_analysis.EPISTART, [table1].dbo.APC_analysis.EPIEND, 
+[table1].dbo.APC_analysis.DISDATE, [table1].dbo.APC_analysis.ENCRYPTED_HESID, [table1].dbo.APC_analysis.EPIKEY, 
+[table1].dbo.APC_analysis.EPIORDER,[table1].dbo.APC_analysis.EPISTAT,  [table1].dbo.APC_analysis.FYEAR,
+[table1].dbo.APC_analysis.ADMIMETH, [table1].dbo.APC_analysis.PROCODE, [table1].dbo.APC_analysis.IMD04, 
+[table1].dbo.APC_analysis.ETHNOS, [table1].dbo.APC_analysis.FIRSTREG, 
+[table1].dbo.APC_analysis.ADMISORC, [table1].dbo.APC_analysis.CLASSPAT, [table1].dbo.APC_analysis.DISMETH, 
+[table1].dbo.APC_analysis.EPITYPE, [table1].dbo.APC_analysis.MAINSPEF, 
+[table1].dbo.APC_analysis.TRETSPEF,[table1].dbo.APC_analysis.DIAG_01, [table1].dbo.APC_analysis.DIAG_02,
+[table1].dbo.APC_analysis.DIAG_03, [table1].dbo.APC_analysis.DIAG_04, [table1].dbo.APC_analysis.DIAG_05, [table1].dbo.APC_analysis.DIAG_06, [table1].dbo.APC_analysis.DIAG_07, [table1].dbo.APC_analysis.DIAG_08, [table1].dbo.APC_analysis.DIAG_09, [table1].dbo.APC_analysis.DIAG_10,
+[table1].dbo.APC_analysis.DIAG_11, [table1].dbo.APC_analysis.DIAG_12, [table1].dbo.APC_analysis.DIAG_13, [table1].dbo.APC_analysis.DIAG_14, [table1].dbo.APC_analysis.DIAG_15,
+[table1].dbo.APC_analysis.DIAG_16, [table1].dbo.APC_analysis.DIAG_17, [table1].dbo.APC_analysis.DIAG_18, [table1].dbo.APC_analysis.DIAG_19, [table1].dbo.APC_analysis.DIAG_20, 
+[table1].dbo.linked_all_match_rank_highest_priority_dups_removed.dob, [table1].dbo.linked_all_match_rank_highest_priority_dups_removed.id, [table1].dbo.linked_all_match_rank_highest_priority_dups_removed.linked_hesid, [table1].dbo.linked_all_match_rank_highest_priority_dups_removed.match_rank, [table1].dbo.linked_all_match_rank_highest_priority_dups_removed.nhs_number, [table1].dbo.linked_all_match_rank_highest_priority_dups_removed.postcode, [table1].dbo.linked_all_match_rank_highest_priority_dups_removed.sex
+INTO [table1].dbo.APC_migrant
+FROM [table1].dbo.APC_analysis
+LEFT JOIN [table1].dbo.linked_all_match_rank_highest_priority_dups_removed ON [table1].dbo.APC_analysis.ENCRYPTED_HESID = [table1].dbo.linked_all_match_rank_highest_priority_dups_removed.linked_hesid
+
+ -------- LINK TO AE table 
+
+ SELECT [FYEAR]
+	  ,[AEKEY]
+	  ,[ENCRYPTED_HESID]
+	  ,[AEATTENDDISP]
+	  ,[AEPATGROUP]
+	  ,[ARRIVALDATE]
+	  ,[CCG_GP_PRACTICE]
+	  ,[ArrivalDateTime_DV]
+	  ,[DEPTIME]
+	  ,[PROCODE]
+	  ,[PROCODE3]
+	  ,[IMD04_DECILE]
+	  ,[ETHNOS]
+
+INTO [table1].dbo.AE_analysis
+FROM [HES_AE].[dbo].[vtHES_AE] 
+WHERE [ENCRYPTED_HESID] IN (SELECT [linked_hesid] FROM [table1].dbo.linked_all_match_rank_highest_priority_dups_removed)
+ AND [FYEAR] BETWEEN '0405' AND '2223'
+
+SELECT [table1].dbo.AE_analysis.ETHNOS, [table1].dbo.AE_analysis.IMD04_DECILE, [table1].dbo.AE_analysis.PROCODE, [table1].dbo.AE_analysis.PROCODE3,
+[table1].dbo.AE_analysis.AEPATGROUP, [table1].dbo.AE_analysis.AEATTENDDISP, [table1].dbo.AE_analysis.ENCRYPTED_HESID,
+[table1].dbo.AE_analysis.AEKEY, [table1].dbo.AE_analysis.FYEAR, [table1].dbo.AE_analysis.ARRIVALDATE, 
+[table1].dbo.AE_analysis.ArrivalDateTime_DV, [table1].dbo.AE_analysis.CCG_GP_PRACTICE, [table1].dbo.AE_analysis.DEPTIME,
+[table1].dbo.linked_all_match_rank_highest_priority_dups_removed.dob, [table1].dbo.linked_all_match_rank_highest_priority_dups_removed.id, [table1].dbo.linked_all_match_rank_highest_priority_dups_removed.linked_hesid, [table1].dbo.linked_all_match_rank_highest_priority_dups_removed.match_rank, [table1].dbo.linked_all_match_rank_highest_priority_dups_removed.nhs_number, [table1].dbo.linked_all_match_rank_highest_priority_dups_removed.postcode, [table1].dbo.linked_all_match_rank_highest_priority_dups_removed.sex
+INTO [table1].dbo.AE_migrant
+FROM [table1].dbo.AE_analysis
+LEFT JOIN [table1].dbo.linked_all_match_rank_highest_priority_dups_removed ON [table1].dbo.AE_analysis.ENCRYPTED_HESID = [table1].dbo.linked_all_match_rank_highest_priority_dups_removed.linked_hesid
+
+-------- LINK TO OP table 
+
+ SELECT [FYEAR_ATTENDKEY]
+	  ,[FYEAR]
+	  ,[APPTDATE]
+	  ,[ATENTYPE]
+	  ,[ATTENDED]
+	  ,[ATTENDKEY]
+	  ,[ENCRYPTED_HESID]
+	  ,[CCG_GP_PRACTICE]
+	  ,[MAINSPEF]  
+	  ,[PROCODE]
+	  ,[PROCODE3]
+	  ,[IMD04]
+	  ,[ETHNOS]
+
+INTO [table1].dbo.OP_analysis
+FROM [HES_Outpatient].[dbo].[vtHES_OP] 
+WHERE [ENCRYPTED_HESID] IN (SELECT [linked_hesid] FROM [table1].dbo.linked_all_match_rank_highest_priority_dups_removed)
+ AND [FYEAR] BETWEEN '0405' AND '2223'
+
+
+SELECT [table1].dbo.OP_analysis.ETHNOS, [table1].dbo.OP_analysis.IMD04, [table1].dbo.OP_analysis.PROCODE, [table1].dbo.OP_analysis.PROCODE3, [table1].dbo.OP_analysis.FYEAR,
+[table1].dbo.OP_analysis.MAINSPEF, [table1].dbo.OP_analysis.CCG_GP_PRACTICE, [table1].dbo.OP_analysis.ENCRYPTED_HESID,
+[table1].dbo.OP_analysis.ATTENDKEY, [table1].dbo.OP_analysis.FYEAR_ATTENDKEY, [table1].dbo.OP_analysis.ATTENDED, [table1].dbo.OP_analysis.ATENTYPE, [table1].dbo.OP_analysis.APPTDATE, 
+[table1].dbo.linked_all_match_rank_highest_priority_dups_removed.dob, [table1].dbo.linked_all_match_rank_highest_priority_dups_removed.id, [table1].dbo.linked_all_match_rank_highest_priority_dups_removed.linked_hesid, [table1].dbo.linked_all_match_rank_highest_priority_dups_removed.match_rank, [table1].dbo.linked_all_match_rank_highest_priority_dups_removed.nhs_number, [table1].dbo.linked_all_match_rank_highest_priority_dups_removed.postcode, [table1].dbo.linked_all_match_rank_highest_priority_dups_removed.sex
+INTO [table1].dbo.OP_migrant
+FROM [table1].dbo.OP_analysis
+LEFT JOIN [table1].dbo.linked_all_match_rank_highest_priority_dups_removed ON [table1].dbo.OP_analysis.ENCRYPTED_HESID = [table1].dbo.linked_all_match_rank_highest_priority_dups_removed.linked_hesid
+
+
+ 
