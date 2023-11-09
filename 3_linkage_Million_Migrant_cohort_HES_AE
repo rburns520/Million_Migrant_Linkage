@@ -1,0 +1,501 @@
+/*************************************************************/
+--Applying the linkage guidance set in A Guide to Linked Mortality Data from Hospital Episode Statistics and the Office for National Statistics  
+--to the HES AE dataset
+-- https://digital.nhs.uk/binaries/content/assets/legacy/pdf/r/q/hes-ons_linked_mortality_data_guide.pdf using page 8 a variable named match rank was added
+--
+--Author: Sacha Wyke
+--QA:Tbc
+--date 21/07/2021
+/*************************************************************/
+
+use [table1];
+
+--IF OBJECT_ID(
+--	'[table1].[dbo].[Linked_base]'
+--) IS NOT NULL DROP TABLE [table1].[dbo].[Linked_base];
+
+
+--select distinct
+--	[IDnew]																	as id,          -- id
+--	case when len([nhs])=10 and 
+--				  [nhs]<>'1111111111' and
+--				  [nhs]<>'2333455667' and
+--				  [nhs]<>'9999999999' then [nhs] end			as nhs_number, --nhs_number		-- how do we caee with the case where there are two ways of identifying and NHS number like for moratlity
+--	case when [dob] <> '0001-01-01' then  
+--				CONVERT(DATE,  [dob], 103) end						as dob,        --date of birth
+--	case when left([postcode],2) in ('zz','xx','11') then null
+--		else Replace([postcode], ' ', '')  end                              as postcode,   --postcode
+--	case when upper([sex]) = 'MALE' then '1'
+--	     when upper([sex]) = 'FEMALE' then '2' 
+--		 when upper([sex]) = 'M' then '1'
+--	     when upper([sex]) = 'F' then '2' 
+--		 when upper([sex]) = 'NOT SPECIFIED' then '9' 
+--		 when upper([sex]) = 'NOT KNOWN' then '0'
+--		 when upper([sex]) = 'UNKNOWN' then '0'
+--		 when upper([sex]) = 'U' then '0'
+--		 ELSE [sex] END														as sex,		  --sex
+--	     NULL															    as communal_establishment_no
+--into [table1].[dbo].[Linked_base]
+
+--from [table1].[dbo].[million_migrant_unique_hes];
+
+
+---Create an amalgamated dataset with HESID and max epi end date
+
+IF OBJECT_ID(
+	'[table1].[dbo].[HESAE_PID_reference]'
+) IS NOT NULL DROP TABLE [table1].[dbo].[HESAE_PID_reference];
+
+
+SELECT dob_dv,homeadd,newnhsno,sex,encrypted_hesid, max([ArrivalDateTime_DV]) as maxArrivalDtTime
+INTO [table1].[dbo].[HESAE_PID_reference]
+FROM [table1].[dbo].[vY065_HEPrefu_HESAE_PID] HESPID
+LEFT JOIN [HES_AE].[dbo].[vtHES_AE] AE 
+ON hespid.[AEKEY]=AE.AEKEY and hespid.[FYEAR]=AE.FYEAR
+WHERE encrypted_hesid IS NOT NULL
+GROUP BY dob_dv,homeadd,newnhsno,sex,encrypted_hesid;
+
+--first pass matching on nhs no, postcode, dob and sex
+PRINT 'Match rank 1'
+
+IF OBJECT_ID(
+'[table1].[dbo].[linked_ae_match_rank]'
+) IS NOT NULL DROP TABLE [table1].[dbo].[linked_ae_match_rank]; 
+
+IF OBJECT_ID(
+'[table1].[dbo].[linked_ae_pass]'
+) IS NOT NULL DROP TABLE [table1].[dbo].[linked_ae_pass]; 
+
+select *
+into [table1].[dbo].[linked_ae_pass]
+from (
+
+SELECT
+	distinct 
+	   mgt.[id]
+      ,mgt.[nhs_number]
+      ,mgt.[dob]
+      ,mgt.[postcode]
+      ,mgt.[sex]
+	,CONVERT(DATETIME, hes.maxArrivalDtTime ) AS order_date,
+	match_rank=1,
+	hes.ENCRYPTED_HESID AS linked_hesid
+FROM
+	[table1].[dbo].[Linked_base] mgt
+	LEFT JOIN [table1].[dbo].[HESAE_PID_reference] hes
+	ON mgt.[nhs_number] =  hes.[NEWNHSNO]
+	AND mgt.dob = CONVERT(DATE,  hes.[DOB_DV])
+	AND mgt.sex =  hes.[sex]
+	AND mgt.postcode = Replace(hes.[HOMEADD], ' ', '')
+	WHERE LEN(mgt.[nhs_number]) >= 10
+	AND mgt.dob IS NOT NULL
+    AND mgt.postcode IS NOT NULL 
+    AND mgt.sex IS NOT NULL) a
+	where linked_hesid is not null;
+
+select * 
+INTO [table1].[dbo].[linked_ae_match_rank]
+from [table1].[dbo].[linked_ae_pass];
+	
+--second pass matching on nhs no, dob and sex
+PRINT 'Match rank 2'
+
+IF OBJECT_ID(
+'[table1].[dbo].[linked_ae_pass]'
+) IS NOT NULL DROP TABLE [table1].[dbo].[linked_ae_pass];  
+
+select *
+into [table1].[dbo].[linked_ae_pass]
+from (
+		SELECT
+	distinct 
+	   main.[id]
+      ,main.[nhs_number]
+      ,main.[dob]
+      ,main.[postcode]
+      ,main.[sex]
+	,CONVERT(DATETIME, hes.maxArrivalDtTime ) AS order_date,
+	match_rank=2,
+	hes.ENCRYPTED_HESID AS linked_hesid
+		FROM (SELECT main.[id], main.[nhs_number], main.[dob], main.[postcode], main.[sex]
+FROM [table1].[dbo].[Linked_base] main
+LEFT JOIN [table1].[dbo].[linked_ae_match_rank] pass
+ON main.[id] = pass.[id]
+WHERE pass.[id] IS NULL) main
+	LEFT JOIN [table1].[dbo].[HESAE_PID_reference] hes
+	ON main.[nhs_number] =  hes.[NEWNHSNO]
+	AND main.dob = CONVERT(DATE,  hes.[DOB_DV])
+	AND main.sex =  hes.[sex]
+	where	LEN(main.[nhs_number]) >= 10
+	AND main.dob IS NOT NULL 
+    AND main.sex IS NOT NULL) a
+	where linked_hesid is not null;
+
+INSERT INTO [table1].[dbo].[linked_ae_match_rank]
+select * 
+from [table1].[dbo].[linked_ae_pass];
+
+	
+--third pass matching on nhs no, postcode, sex and partial dob
+PRINT 'Match rank 3'
+
+IF OBJECT_ID(
+'[table1].[dbo].[linked_ae_pass]'
+) IS NOT NULL DROP TABLE [table1].[dbo].[linked_ae_pass]; 
+
+select *
+into [table1].[dbo].[linked_ae_pass]
+from (
+		SELECT
+	distinct 
+	   main.[id]
+      ,main.[nhs_number]
+      ,main.[dob]
+      ,main.[postcode]
+      ,main.[sex]
+	,CONVERT(DATETIME, hes.maxArrivalDtTime ) AS order_date,
+	match_rank=3,
+	hes.ENCRYPTED_HESID AS linked_hesid
+		FROM (SELECT main.[id], main.[nhs_number], main.[dob], main.[postcode], main.[sex]
+FROM [table1].[dbo].[Linked_base] main
+LEFT JOIN [table1].[dbo].[linked_ae_match_rank] pass
+ON main.[id] = pass.[id]
+WHERE pass.[id] IS NULL) main
+	LEFT JOIN [table1].[dbo].[HESAE_PID_reference] hes
+	ON main.[nhs_number] =  hes.[NEWNHSNO]
+	AND main.sex =  hes.[sex]
+			AND (
+				-- partial dob matching
+				main.dob NOT IN ('1901-01-01', '1899-12-31') --Neither DOB is 1901/01/01, Neither DOB is 1899/12/31
+				AND CONVERT(date,  hes.[DOB_DV]) NOT IN ('1901-01-01', '1899-12-31')
+				AND ABS(
+					DATEDIFF(
+						DAY,
+						main.dob,
+						CONVERT(date,  hes.[DOB_DV])
+					)
+				) <= (365.25 * 14) --The two DOB values are no more than 14 years apart
+				AND (
+					main.dob = CONVERT(date,  hes.[DOB_DV]) --The two DOB values are the same
+					OR (
+						YEAR(main.dob) = YEAR(CONVERT(date,  hes.[DOB_DV]))
+						AND MONTH(main.dob) = MONTH(CONVERT(date,  hes.[DOB_DV]))
+					) --yymm --or two components (ie YYYY, MM, DD) of the two DOB values match
+					OR (
+						YEAR(main.dob) = YEAR(CONVERT(date,  hes.[DOB_DV]))
+						AND DAY(main.dob) = DAY(CONVERT(date,  hes.[DOB_DV]))
+					) --yydd
+					OR (
+						MONTH(main.dob) = MONTH(CONVERT(date,  hes.[DOB_DV]))
+						AND DAY(main.dob) = DAY(CONVERT(date,  hes.[DOB_DV]))
+					) --mmdd
+					OR --or two components of the two DOB values match when the MM and DD parts of one of them are swapped.
+					(
+						(
+							YEAR(main.dob) = YEAR(CONVERT(date,  hes.[DOB_DV]))
+							AND MONTH(main.dob) = DAY(CONVERT(date,  hes.[DOB_DV]))
+						)
+						OR (
+							YEAR(main.dob) = YEAR(CONVERT(date,  hes.[DOB_DV]))
+							AND DAY(main.dob) = MONTH(CONVERT(date,  hes.[DOB_DV]))
+						)
+						OR (
+							MONTH(main.dob) = DAY(CONVERT(date,  hes.[DOB_DV]))
+							AND DAY(main.dob) = MONTH(CONVERT(date,  hes.[DOB_DV]))
+						)
+					)
+				)
+			)
+			AND main.postcode = REPLACE( hes.[homeadd], ' ', '')
+	where LEN(main.[nhs_number]) >= 10
+	AND main.dob IS NOT NULL
+    AND main.postcode IS NOT NULL 
+    AND main.sex IS NOT NULL) a
+	where linked_hesid is not null;
+
+INSERT INTO [table1].[dbo].[linked_ae_match_rank]
+select * 
+from [table1].[dbo].[linked_ae_pass];
+	
+--fourth pass matching on nhs no, sex and partial dob
+PRINT 'Match rank 4'
+
+IF OBJECT_ID(
+'[table1].[dbo].[linked_ae_pass]'
+) IS NOT NULL DROP TABLE [table1].[dbo].[linked_ae_pass]; 
+
+select *
+into [table1].[dbo].[linked_ae_pass]
+from (
+SELECT
+	distinct 
+	   main.[id]
+      ,main.[nhs_number]
+      ,main.[dob]
+      ,main.[postcode]
+      ,main.[sex]
+	,CONVERT(DATETIME, hes.maxArrivalDtTime ) AS order_date,
+	match_rank=4,
+	hes.ENCRYPTED_HESID AS linked_hesid
+		FROM (SELECT main.[id], main.[nhs_number], main.[dob], main.[postcode], main.[sex]
+FROM [table1].[dbo].[Linked_base] main
+LEFT JOIN [table1].[dbo].[linked_ae_match_rank] pass
+ON main.[id] = pass.[id]
+WHERE pass.[id] IS NULL) main
+	LEFT JOIN [table1].[dbo].[HESAE_PID_reference] hes
+	ON main.[nhs_number] =  hes.[NEWNHSNO]
+	AND main.sex =  hes.[sex]
+			AND (
+				-- partial dob matching
+				main.dob NOT IN ('1901-01-01', '1899-12-31') --Neither DOB is 1901/01/01, Neither DOB is 1899/12/31
+				AND CONVERT(date,  hes.[DOB_DV]) NOT IN ('1901-01-01', '1899-12-31')
+				AND ABS(
+					DATEDIFF(
+						DAY,
+						main.dob,
+						CONVERT(date,  hes.[DOB_DV])
+					)
+				) <= (365.25 * 14) --The two DOB values are no more than 14 years apart
+				AND (
+					main.dob = CONVERT(date,  hes.[DOB_DV]) --The two DOB values are the same
+					OR (
+						YEAR(main.dob) = YEAR(CONVERT(date,  hes.[DOB_DV]))
+						AND MONTH(main.dob) = MONTH(CONVERT(date,  hes.[DOB_DV]))
+					) --yymm --or two components (ie YYYY, MM, DD) of the two DOB values match
+					OR (
+						YEAR(main.dob) = YEAR(CONVERT(date,  hes.[DOB_DV]))
+						AND DAY(main.dob) = DAY(CONVERT(date,  hes.[DOB_DV]))
+					) --yydd
+					OR (
+						MONTH(main.dob) = MONTH(CONVERT(date,  hes.[DOB_DV]))
+						AND DAY(main.dob) = DAY(CONVERT(date,  hes.[DOB_DV]))
+					) --mmdd
+					OR --or two components of the two DOB values match when the MM and DD parts of one of them are swapped.
+					(
+						(
+							YEAR(main.dob) = YEAR(CONVERT(date,  hes.[DOB_DV]))
+							AND MONTH(main.dob) = DAY(CONVERT(date,  hes.[DOB_DV]))
+						)
+						OR (
+							YEAR(main.dob) = YEAR(CONVERT(date,  hes.[DOB_DV]))
+							AND DAY(main.dob) = MONTH(CONVERT(date,  hes.[DOB_DV]))
+						)
+						OR (
+							MONTH(main.dob) = DAY(CONVERT(date,  hes.[DOB_DV]))
+							AND DAY(main.dob) = MONTH(CONVERT(date,  hes.[DOB_DV]))
+						)
+					)
+				)
+			)
+	where LEN(main.[nhs_number]) >= 10
+	AND main.dob IS NOT NULL
+    AND main.sex IS NOT NULL) a
+	where linked_hesid is not null;
+
+INSERT INTO [table1].[dbo].[linked_ae_match_rank]
+select * 
+from [table1].[dbo].[linked_ae_pass];
+	
+--fifth pass matching on nhs no, postcode
+PRINT 'Match rank 5'
+
+IF OBJECT_ID(
+'[table1].[dbo].[linked_ae_pass]'
+) IS NOT NULL DROP TABLE [table1].[dbo].[linked_ae_pass]; 
+
+select *
+into [table1].[dbo].[linked_ae_pass]
+from (
+SELECT
+	distinct 
+	   main.[id]
+      ,main.[nhs_number]
+      ,main.[dob]
+      ,main.[postcode]
+      ,main.[sex]
+	,CONVERT(DATETIME, hes.maxArrivalDtTime ) AS order_date,
+	match_rank=5,
+	hes.ENCRYPTED_HESID AS linked_hesid
+		FROM (SELECT main.[id], main.[nhs_number], main.[dob], main.[postcode], main.[sex]
+FROM [table1].[dbo].[Linked_base] main
+LEFT JOIN [table1].[dbo].[linked_ae_match_rank] pass
+ON main.[id] = pass.[id]
+WHERE pass.[id] IS NULL) main
+	LEFT JOIN [table1].[dbo].[HESAE_PID_reference] hes
+	ON main.[nhs_number] =  hes.[NEWNHSNO]
+    AND REPLACE(main.postcode, ' ', '') = REPLACE( hes.[homeadd], ' ', '')
+	where LEN(main.[nhs_number]) >= 10
+    AND main.postcode IS NOT NULL) a
+	where linked_hesid is not null; 
+
+INSERT INTO [table1].[dbo].[linked_ae_match_rank]
+select * 
+from [table1].[dbo].[linked_ae_pass];
+
+	
+--sixth pass matching on DOB, SEX and POSTCODE where NHSNO
+--does not contradict the match and DOB is not 1 January and the POSTCODE
+--is not in the 'ignore' list
+PRINT 'Match rank 6'
+
+IF OBJECT_ID(
+'[table1].[dbo].[linked_ae_pass]'
+) IS NOT NULL DROP TABLE [table1].[dbo].[linked_ae_pass]; 
+
+select *
+into [table1].[dbo].[linked_ae_pass]
+from (
+SELECT
+	distinct 
+	   main.[id]
+      ,main.[nhs_number]
+      ,main.[dob]
+      ,main.[postcode]
+      ,main.[sex]
+	,CONVERT(DATETIME, hes.maxArrivalDtTime ) AS order_date,
+	match_rank=6,
+	hes.ENCRYPTED_HESID AS linked_hesid
+		FROM (SELECT main.[id], main.[nhs_number], main.[dob], main.[postcode], main.[sex], main.[communal_establishment_no]
+FROM [table1].[dbo].[Linked_base] main
+LEFT JOIN [table1].[dbo].[linked_ae_match_rank] pass
+ON main.[id] = pass.[id]
+WHERE pass.[id] IS NULL) main
+LEFT JOIN [BirthsDeaths].[dbo].[vComEst] com_Est 
+ON com_Est.Entity  = main.communal_establishment_no 
+LEFT JOIN [table1].[dbo].[HESAE_PID_reference] hes
+ON main.dob = CONVERT(DATE,  hes.[DOB_DV])
+	AND main.sex =  hes.[sex]
+			AND (
+				MONTH(main.dob) <> 1
+				AND DAY(main.dob) <> 1
+			)
+			AND main.postcode = REPLACE( hes.[homeadd], ' ', '')
+WHERE (com_Est.[Entity] IS NULL 
+OR (com_Est.[Entity] IS NOT NULL AND hes.[maxArrivalDtTime] > CONVERT(DATE, com_Est.DATECLOSED)
+OR (com_Est.[Entity] IS NOT NULL AND hes.[maxArrivalDtTime] <= CONVERT(DATE, com_Est.DATEOPENED)))
+AND (main.NHS_number IS NULL OR  main.NHS_number = '' OR  LEN(main.NHS_number) < 10 
+OR main.NHS_number LIKE '&+&'
+OR main.NHS_number = '0000000000'
+OR main.NHS_number = '000 000 00'
+OR main.NHS_number = '.'
+OR hes.NEWNHSNO IS NULL
+OR hes.NEWNHSNO = ''
+OR LEN(hes.NEWNHSNO) < 10
+OR hes.NEWNHSNO LIKE '&+&'
+OR hes.NEWNHSNO = '0000000000'
+OR hes.NEWNHSNO = '000 000 00'
+OR hes.NEWNHSNO = '.')
+	AND main.dob IS NOT NULL
+    AND main.sex IS NOT NULL
+    AND main.postcode IS NOT NULL)) a
+WHERE linked_hesid is not null; 
+
+INSERT INTO [table1].[dbo].[linked_ae_match_rank]
+select * 
+from [table1].[dbo].[linked_ae_pass];
+	
+--seventh pass matching Exact match of DOB, SEX and POSTCODE where NHSNO
+	--does not contradict the match and DOB is not 1 January
+PRINT 'Match rank 7'
+
+IF OBJECT_ID(
+'[table1].[dbo].[linked_ae_pass]'
+) IS NOT NULL DROP TABLE [table1].[dbo].[linked_ae_pass]; 
+
+select *
+into [table1].[dbo].[linked_ae_pass]
+from (
+SELECT
+	distinct 
+	   main.[id]
+      ,main.[nhs_number]
+      ,main.[dob]
+      ,main.[postcode]
+      ,main.[sex]
+	,CONVERT(DATETIME, hes.maxArrivalDtTime ) AS order_date,
+	match_rank=7,
+	hes.ENCRYPTED_HESID AS linked_hesid
+		FROM (SELECT main.[id], main.[nhs_number], main.[dob], main.[postcode], main.[sex], main.[communal_establishment_no]
+FROM [table1].[dbo].[Linked_base] main
+LEFT JOIN [table1].[dbo].[linked_ae_match_rank] pass
+ON main.[id] = pass.[id]
+WHERE pass.[id] IS NULL) main
+LEFT JOIN [BirthsDeaths].[dbo].[vComEst] com_Est 
+ON com_Est.Entity  = main.communal_establishment_no 
+LEFT JOIN [table1].[dbo].[HESAE_PID_reference] hes
+ON main.dob = CONVERT(DATE,  hes.[DOB_DV])
+	AND main.sex =  hes.[sex]
+			AND (
+				MONTH(main.dob) <> 1
+				AND DAY(main.dob) <> 1
+			)
+			AND main.postcode = REPLACE( hes.[homeadd], ' ', '')
+WHERE (main.NHS_number IS NULL OR  main.NHS_number = '' OR  LEN(main.NHS_number) < 10 
+OR main.NHS_number LIKE '&+&'
+OR main.NHS_number = '0000000000'
+OR main.NHS_number = '000 000 00'
+OR main.NHS_number = '.'
+OR hes.NEWNHSNO IS NULL
+OR hes.NEWNHSNO = ''
+OR LEN(hes.NEWNHSNO) < 10
+OR hes.NEWNHSNO LIKE '&+&'
+OR hes.NEWNHSNO = '0000000000'
+OR hes.NEWNHSNO = '000 000 00'
+OR hes.NEWNHSNO = '.')
+	AND main.dob IS NOT NULL
+    AND main.sex IS NOT NULL
+    AND main.postcode IS NOT NULL) a
+	where linked_hesid is not null;
+
+INSERT INTO [table1].[dbo].[linked_ae_match_rank]
+select * 
+from [table1].[dbo].[linked_ae_pass];
+	
+--eigth pass  Exact match of DOB, SEX and POSTCODE where DOB is not 1 January
+PRINT 'Match rank 8'
+
+IF OBJECT_ID(
+'[table1].[dbo].[linked_ae_pass]'
+) IS NOT NULL DROP TABLE [table1].[dbo].[linked_ae_pass]; 
+
+select *
+into [table1].[dbo].[linked_ae_pass]
+from (
+SELECT
+	distinct 
+	   main.[id]
+      ,main.[nhs_number]
+      ,main.[dob]
+      ,main.[postcode]
+      ,main.[sex]
+	,CONVERT(DATETIME, hes.maxArrivalDtTime ) AS order_date,
+	match_rank=8,
+	hes.ENCRYPTED_HESID AS linked_hesid
+		FROM (SELECT main.[id], main.[nhs_number], main.[dob], main.[postcode], main.[sex], main.[communal_establishment_no]
+FROM [table1].[dbo].[Linked_base] main
+LEFT JOIN [table1].[dbo].[linked_ae_match_rank] pass
+ON main.[id] = pass.[id]
+WHERE pass.[id] IS NULL) main
+	LEFT JOIN [table1].[dbo].[HESAE_PID_reference] hes 
+	ON main.dob = CONVERT(date,  hes.[DOB_DV])
+			AND (
+				MONTH(main.dob) <> 1
+				AND DAY(main.dob) <> 1
+			) -- is that correct for removing 1st Jan
+			AND main.sex =  hes.[sex]
+			AND main.postcode = REPLACE( hes.[homeadd], ' ', '')
+			where
+			main.dob IS NOT NULL
+			AND main.sex IS NOT NULL
+			AND main.postcode IS NOT NULL) a
+				where linked_hesid is not null;
+
+INSERT INTO [table1].[dbo].[linked_ae_match_rank]
+select * 
+from [table1].[dbo].[linked_ae_pass];
+
+
+
+
+
+
