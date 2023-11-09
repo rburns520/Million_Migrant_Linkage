@@ -1,0 +1,241 @@
+#### ============================================================== ####
+####  LINKAGE OF MILLION MIGRANT COHORT TO HES LINK TABLE IN DATA LAKE ####
+#### ============================================================== ####
+#### LINKAGE TO TABLE IN PHE DATA LAKE WITH HES IDs ON JAN 09 2023
+
+## Notes: 
+# This dataset was already de-duplicated for unique individuals that had more than one HES ID (See SQL script 3; n = 2310). 
+# To link HES link table to entries and first entry datasets. 
+# To de-duplicate for HES IDs that are identical for different individuals (e.g. one HES ID for two or more people; n = 3436).
+# To remove individuals with missing exam dates in entries dataset. 
+# To clean linked dataset and remove unnecessary variables. 
+
+## INSTALL PACKAGES
+install.packages("odbc")
+install.packages("DBI")
+install.packages("Rtools")
+install.packages("icd")
+install.packages("git2r")
+install.packages("getPass")
+install.packages("tidyverse")
+if (!require(remotes)) install.packages("remotes")
+remotes::install_git('https://gitlab.phe.gov.uk/packages/DataLakeR',
+                     credentials = git2r::cred_user_pass("USER.NAME", getPass::getPass()))
+
+if (!require(remotes)) install.packages("remotes")
+remotes::install_gitlab(repo = "packages/datalakeutils", host = "gitlab.phe.gov.uk")
+
+if (!require(remotes)) install.packages("remotes")
+remotes::install_gitlab(repo = "packages/DataLakeR", 
+                        host = "gitlab.phe.gov.uk",
+                        update = "always")
+                        
+## INSTALL LIBRARIES
+library(odbc)
+library(DBI)
+library(dplyr)
+library(dplyr)
+library(haven)
+library(foreign)
+library(tidyverse)
+library(stringi)
+library(lubridate)
+library(DataLakeR)
+library(lmtest)
+library(gtsummary)
+library(RColorBrewer)
+library(webshot)
+library(flextable)
+library(data.table)
+library(officer)
+library(naniar)
+library("plyr")
+
+## SET WORKING DIRECTORY
+setwd("")
+
+## IMPORT DATA
+entries 
+first_entry
+
+# IMPORT HES LINKED DATASET FROM DATA LAKE (need DataLakeR package)
+hes_linked 
+dups 
+
+#### ============================================================== ####
+#### LINKAGE TO HES LINKED DATASET TO ENTRIES                       ####
+#### ============================================================== ####
+
+# Matched in HES 
+# 1 = matched in HES
+# 0 = did not match in HES 
+
+hes_linked$matched_hes <- "1"
+
+# Linking the HES linked dataset to entire Million Migrants cohort with multiple entries 
+entries$id <- as.character(entries$id)
+hes_linked <- hes_linked %>% select(id, match_rank, matched_hes, linked_hesid)
+entries <- dplyr::left_join(entries, hes_linked, by="id")
+
+entries$matched_hes <- ifelse(is.na(entries$matched_hes), 0, entries$matched_hes)
+
+entries_hes <- entries
+
+# Removing missing dates
+entries_hes <- entries_hes %>% 
+  filter(!is.na(exam_date))
+
+# Drop unnecessary name variables 
+entries_hes <- entries_hes %>% 
+  select(-c(last_name, first_name, first_name_pds, first_name_alt_pds, last_name_pds, 
+            last_name_alt_pds))
+
+#### ============================================================== ####
+#### LINKAGE TO HES LINKED DATASET TO FIRST ENTRY                   ####
+#### ============================================================== ####
+
+# Linking the HES linked dataset to entire Million Migrants cohort first entry
+first_entry$id <- as.character(first_entry$id)
+first_entry_hes <- dplyr::left_join(first_entry, hes_linked, by="id")
+
+first_entry_hes$matched_hes <- ifelse(is.na(first_entry_hes$matched_hes), 0, first_entry_hes$matched_hes)
+
+# Drop unnecessary variables 
+first_entry_hes <- first_entry_entries %>% 
+  select(-c(last_name, first_name, first_name_pds, first_name_alt_pds, last_name_pds, 
+            last_name_alt_pds))
+
+#### ============================================================== ####
+#### De-duplication 1 - Duplicate IDS                               ####
+#### ============================================================== ####
+# Different HES IDs for identical individuals
+# Identified in SQL code
+# Removed already
+# Reviewing demographics
+
+# IMPORT DUPS (need DataLakeR package)
+dups_org  
+
+n_distinct(dups$id)
+x <- n_distinct(dups$linked_hesid)
+
+# Linked back to demographic data 
+
+dups2 <- dups %>% select(id, match_rank)
+dups_linked <- left_join(dups2, first_entry, by="id")
+
+dups_linked <- dups_linked %>% distinct(id, .keep_all = TRUE)
+
+# Demographics of those removed
+
+dups_linked_tbl <- dups_linked %>% 
+  select(match_rank, sex, age, agegroups_new, exam_year_cat, region, visa_type) %>%
+  dplyr::mutate(agegroups_new = factor(agegroups_new) %>% 
+                  forcats::fct_explicit_na(na_level = "Missing")) %>%
+  dplyr::mutate(exam_year_cat = factor(exam_year_cat) %>% 
+                  forcats::fct_explicit_na(na_level = "Missing")) %>%
+  dplyr::mutate(region = factor(region) %>% 
+                  forcats::fct_explicit_na(na_level = "Missing")) %>%
+  dplyr::mutate(visa_type = factor(visa_type) %>% 
+                  forcats::fct_explicit_na(na_level = "Missing")) %>%
+  dplyr::mutate(match_rank = factor(match_rank) %>% 
+                  forcats::fct_explicit_na(na_level = "Missing"))
+
+dup_dem <- dups_linked_tbl %>%
+  tbl_summary(
+    by = match_rank, percent="column", 
+    statistic = all_continuous() ~ "{median} ({p25}, {p75})",
+    label = c(sex ~ "Sex", age ~ "Age", agegroups_new ~ "Age Group", 
+              exam_year_cat ~ "Exam Year", region ~ "Region", visa_type ~ "Entry Visa Type"),
+    digits = list(all_categorical() ~ c(0, 1)),
+    missing = "no"
+  ) %>%
+  modify_header(all_stat_cols() ~ "**{level}**<br>N =  {n} ({style_percent(p)}%)") %>%
+  modify_header(label ~ "**Variable**") %>%
+  add_overall() %>%
+  modify_footnote(
+    update = all_stat_cols() ~ "Median (IQR) or Frequency (%)"
+  ) %>%
+  bold_labels() %>%
+  modify_spanning_header(c(stat_1, stat_2, stat_3, stat_4, stat_5) ~ "**HES Match Rank**") %>%
+  as_flex_table()
+
+save_as_docx(dup_dem, values = NULL)
+
+
+#### ============================================================== ####
+#### De-duplication 2 - Duplicate HES IDs                           ####
+#### ============================================================== ####
+# Identical HES IDs for different individuals (IDs)
+# Remove from both datasets - entries and first entry
+# Demographics of those removed
+
+n_distinct(hes_linked$id)
+
+# Identify duplicates 
+dis <- hes_linked[hes_linked$linked_hesid %in% unique(hes_linked$linked_hesid[duplicated(hes_linked$linked_hesid)]),] 
+dis <- dis %>%
+  group_by(linked_hesid) %>%
+  mutate(dup = (id_t = row_number()))
+
+# Remove HES ID variable in entries from IDs in dis df; n = 3436
+original <- subset(entries_hes, !(id %in% dis$id))
+remove <- subset(entries_hes, (id %in% dis$id))
+remove <- remove %>%
+  select(-c(match_rank, matched_hes, linked_hesid))
+
+final_entries <- rbind.fill(original, remove)
+final_entries$matched_hes <- ifelse(is.na(final_entries$matched_hes), 0, final_entries$matched_hes)
+
+# Remove HES ID variable in first entry from IDs in dis df
+original <- subset(first_entry_hes, !(id %in% dis$id))
+remove <- subset(first_entry_hes, (id %in% dis$id))
+remove <- remove %>%
+  select(-c(match_rank, matched_hes, linked_hesid))
+
+final_first <- rbind.fill(original, remove)
+final_first$matched_hes <- ifelse(is.na(final_first$matched_hes), 0, final_first$matched_hes)  
+
+# Demographics of those removed
+# remove created above 
+
+dups2_tbl <- remove %>% 
+  select(match_rank, sex, age, agegroups_new, exam_year_cat, region, visa_type) %>%
+  dplyr::mutate(agegroups_new = factor(agegroups_new) %>% 
+                  forcats::fct_explicit_na(na_level = "Missing")) %>%
+  dplyr::mutate(exam_year_cat = factor(exam_year_cat) %>% 
+                  forcats::fct_explicit_na(na_level = "Missing")) %>%
+  dplyr::mutate(region = factor(region) %>% 
+                  forcats::fct_explicit_na(na_level = "Missing")) %>%
+  dplyr::mutate(visa_type = factor(visa_type) %>% 
+                  forcats::fct_explicit_na(na_level = "Missing")) %>%
+  dplyr::mutate(match_rank = factor(match_rank) %>% 
+                  forcats::fct_explicit_na(na_level = "Missing"))
+
+dups2_dem  <- dups2_tbl  %>%
+  tbl_summary(
+    by = match_rank, percent="column", 
+    statistic = all_continuous() ~ "{median} ({p25}, {p75})",
+    label = c(sex ~ "Sex", age ~ "Age", agegroups_new ~ "Age Group", 
+              exam_year_cat ~ "Exam Year", region ~ "Region", visa_type ~ "Entry Visa Type"),
+    digits = list(all_categorical() ~ c(0, 1)),
+    missing = "no"
+  ) %>%
+  modify_header(all_stat_cols() ~ "**{level}**<br>N =  {n} ({style_percent(p)}%)") %>%
+  modify_header(label ~ "**Variable**") %>%
+  add_overall() %>%
+  modify_footnote(
+    update = all_stat_cols() ~ "Median (IQR) or Frequency (%)"
+  ) %>%
+  bold_labels() %>%
+  modify_spanning_header(c(stat_1, stat_2, stat_3, stat_4, stat_5) ~ "**HES Match Rank**") %>%
+  as_flex_table()
+
+save_as_docx(dups2_dem, values = NULL, path = "C:\\tables\\hes_dups2_demographics.docx", pr_section = sect_properties1)
+
+#### ============================================================== ####
+#### De-duplication 2 - Duplicate HES IDs                           ####
+#### ============================================================== ####
+
+## Save entries and first entry cleaned with HES
+
