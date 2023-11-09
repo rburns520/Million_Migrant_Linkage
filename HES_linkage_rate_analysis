@@ -1,0 +1,708 @@
+
+#### ============================================================== ####
+#### COMPARING LINKAGE TO HES IN MILLION MIGRANT COHORT             ####
+#### ============================================================== ####
+#### THIS SCRIPT IS FOR INDIVDIUALS FIRST ENTRY* 
+#### MAKING GT SUMMARY TABLES
+
+## INSTALL LIBRARIES
+library(tidyverse)
+library(lmtest)
+library(gtsummary)
+library(RColorBrewer)
+library(webshot)
+library(lubridate)
+library(odbc)
+library(DBI)
+library(dbplyr)
+library(dplyr)
+library(haven)
+library(foreign)
+library(tidyverse)
+library(stringi)
+library(lubridate)
+library(DataLakeR)
+library(lmtest)
+library(gtsummary)
+library(RColorBrewer)
+library(webshot)
+library(flextable)
+library(data.table)
+library(officer)
+library(smd)
+library(ggpubr)
+library(patchwork)
+
+
+## SET WORKING DIRECTORY
+setwd("")
+
+## SET WORD FORMAT
+sect_properties1 <- prop_section(
+  page_size = page_size(orient = "landscape",
+                        width = 8.3, height = 11.7),
+  type = "continuous",
+  page_margins = page_mar()
+)
+
+## IMPORT DATA
+first_entry 
+
+## Cleaned DATA to include 6mo rule (USING BELOW)
+cohort
+
+#### ============================================================== ####
+####  CLEANING FIRST ENTRY DATA FOR TABLES                          ####
+#### ============================================================== ####
+
+## RESTRICT to only include FIRST screening 
+first_entry <- cohort %>%
+  group_by(id) %>%
+  filter(exam_date == min(exam_date)) %>%
+  ungroup()
+
+## CREATE LENGTH OF TIME SINCE ARRIVAL 
+# Length in country since March 23 2020
+first_entry$length <- time_length(difftime(as.Date("2020-03-23"), as.Date(first_entry$cohort_entry)), "years")
+first_entry$length <- round(first_entry$length, digits=1)
+first_entry$length <- ifelse(first_entry$length<0, 0, first_entry$length) #gets rid of neg values
+
+# Calculate quantiles to determine categories
+quantile(first_entry$length, na.rm=TRUE)
+
+first_entry$length_cat <- cut(first_entry$length, breaks=c(0,1.91,4.91,7.91,Inf), labels=c("<2", "2 to 4", "5 to 7", ">8"), include.lowest = TRUE)
+summary(first_entry$length_cat)
+
+## CLEAN MAIN VARIABLES
+
+# ADD missing and recode factors
+first_entry$region[first_entry$region==""] <- "Missing"
+first_entry$agegroups_new[first_entry$agegroups_new==""] <- "Missing"
+
+first_entry <- first_entry %>%
+  mutate(region = as.factor(region)) %>%
+  mutate(region = fct_relevel(region, c("East Asia and Pacific", "Europe and Central Asia", "Latin America and Caribbean", "Middle East and North Africa", 
+                                        "North America", "South Asia", "Sub-Saharan Africa", "Missing"))) %>%
+  mutate(agegroups_new = as.factor(agegroups_new)) %>%
+  mutate(agegroups_new = fct_relevel(agegroups_new, c("0 to 17", "18 to 34", "35 to 49", "50 to 64", "65+", "Missing"))) %>%
+  mutate(sex = as.factor(sex))
+
+# Matched - rename variable for table
+first_entry$matched_hes[first_entry$matched_hes==0] <- "Not Linked"
+first_entry$matched_hes[first_entry$matched_hes==1] <- "Linked"
+
+#### ============================================================== ####
+####  MIGRANT COHORT BY FIRST ENTRY BY LINKAGE TO HES               ####
+#### ============================================================== ####
+# Table Descriptive analysis of the Million Migrant cohort first entry 2005 - 2020, linked in HES
+
+first_entry_tbl <- first_entry %>% 
+  select(matched_hes, sex, age, agegroups_new, length_cat, region, visa_type) 
+
+# Column percentages 
+hes_linkage_first_entry <- first_entry_tbl %>%
+  tbl_summary(
+    by = matched_hes, percent="column", 
+    statistic = all_continuous() ~ "{median} ({p25}, {p75})",
+    label = c(sex ~ "Sex", age ~ "Age", agegroups_new ~ "Age Group", 
+              length_cat ~ "Length in England", region ~ "Region", visa_type ~ "Entry Visa Type"),
+    digits = list(all_categorical() ~ c(0, 1)),
+    missing = "no"
+  ) %>%
+  add_p(pvalue_fun = ~style_pvalue(.x, digits = 1)) %>%
+  modify_header(all_stat_cols() ~ "**{level}** N =  {n} ({style_percent(p)}%)") %>%
+  modify_header(label ~ "**Variable**") %>%
+  add_overall() %>%
+  modify_footnote(
+    update = all_stat_cols() ~ "Median (IQR) or Frequency (%)"
+  ) %>%
+  bold_labels() %>% 
+  modify_spanning_header(c(stat_1, stat_2) ~ "**HES Linkage**") %>%
+  as_flex_table()
+
+# Row percentages
+hes_linkage_first_entry <- first_entry_tbl %>%
+  tbl_summary(
+    by = matched_hes, percent="row", 
+    statistic = all_continuous() ~ "{median} ({p25}, {p75})",
+    label = c(sex ~ "Sex", age ~ "Age", agegroups_new ~ "Age Group", 
+              length_cat ~ "Length in England", region ~ "Region", visa_type ~ "Entry Visa Type"),
+    digits = list(all_categorical() ~ c(0, 1)),
+    missing = "no"
+  ) %>%
+  add_p(pvalue_fun = ~style_pvalue(.x, digits = 1)) %>%
+  modify_header(all_stat_cols() ~ "**{level}** N =  {n} ({style_percent(p)}%)") %>%
+  modify_header(label ~ "**Variable**") %>%
+  add_overall() %>%
+  modify_footnote(
+    update = all_stat_cols() ~ "Median (IQR) or Frequency (%)"
+  ) %>%
+  bold_labels() %>% 
+  modify_spanning_header(c(stat_1, stat_2) ~ "**HES Linkage**") %>%
+  as_flex_table()
+
+#### ============================================================== ####
+####  MIGRANT COHORT 1 BY LINKAGE ROUND TO HES                      ####
+#### ============================================================== ####
+#### Round number in HES linkage assessed 
+
+hes_only <- first_entry %>%
+  filter(matched_hes == "Linked") 
+
+hes_only$match_rank <- as.factor(hes_only$match_rank)
+summary(hes_only$match_rank)
+
+rounds_tbl <- hes_only %>% 
+  select(match_rank, sex, age, agegroups_new, length_cat, region, visa_type) 
+
+rounds_tlb <- rounds_tbl %>%
+  filter(match_rank !="Missing")
+
+# Column percentages 
+hes_matched_first_round <- rounds_tbl %>%
+  tbl_summary(
+    by = match_rank, percent="column", 
+    statistic = all_continuous() ~ "{median} ({p25}, {p75})",
+    label = c(sex ~ "Sex", age ~ "Age", agegroups_new ~ "Age Group", 
+              length_cat ~ "Length in England", region ~ "Region", visa_type ~ "Entry Visa Type"),
+    digits = list(all_categorical() ~ c(0, 1)),
+    missing = "no"
+  ) %>%
+  modify_header(all_stat_cols() ~ "**{level}**<br>N =  {n} ({style_percent(p)}%)") %>%
+  modify_header(label ~ "**Variable**") %>%
+  modify_footnote(
+    update = all_stat_cols() ~ "Median (IQR) or Frequency (%)"
+  ) %>%
+  bold_labels() %>%
+  modify_spanning_header(c(stat_1, stat_2, stat_3, stat_4, stat_5) ~ "**HES Match Rank**") %>%
+  as_flex_table()
+
+# Row percentages 
+hes_matched_first_round <- rounds_tbl %>%
+  tbl_summary(
+    by = match_rank, percent="row", 
+    statistic = all_continuous() ~ "{median} ({p25}, {p75})",
+    label = c(sex ~ "Sex", age ~ "Age", agegroups_new ~ "Age Group", 
+              length_cat ~ "Length in England", region ~ "Region", visa_type ~ "Entry Visa Type"),
+    digits = list(all_categorical() ~ c(0, 1)),
+    missing = "no"
+  ) %>%
+  modify_header(all_stat_cols() ~ "**{level}**<br>N =  {n} ({style_percent(p)}%)") %>%
+  modify_header(label ~ "**Variable**") %>%
+  modify_footnote(
+    update = all_stat_cols() ~ "Median (IQR) or Frequency (%)"
+  ) %>%
+  bold_labels() %>%
+  modify_spanning_header(c(stat_1, stat_2, stat_3, stat_4, stat_5) ~ "**HES Match Rank**") %>%
+  as_flex_table()
+
+#### ============================================================== ####
+####  MIGRANT COHORT 1 (UNIQUE) BY LINKAGE ROUND TO HES/ONS ####
+#### ============================================================== ####
+#### Out of MM-PDS denominator 
+
+first_entry_nhs <- first_entry %>%
+  filter(!is.na(nhs))
+
+first_entry_tbl_nhs <- first_entry_nhs %>% 
+  select(matched_hes, sex, age, agegroups_new, length_cat, region, visa_type) 
+
+# Column percentages 
+hes_linkage_first_entry <- first_entry_tbl_nhs %>%
+  tbl_summary(
+    by = matched_hes, percent="column", 
+    statistic = all_continuous() ~ "{median} ({p25}, {p75})",
+    label = c(sex ~ "Sex", age ~ "Age", agegroups_new ~ "Age Group", 
+              length_cat ~ "Length in England", region ~ "Region", visa_type ~ "Entry Visa Type"),
+    digits = list(all_categorical() ~ c(0, 1)),
+    missing = "no"
+  ) %>%
+  add_p(pvalue_fun = ~style_pvalue(.x, digits = 1)) %>%
+  modify_header(all_stat_cols() ~ "**{level}**<br>N =  {n} ({style_percent(p)}%)") %>%
+  modify_header(label ~ "**Variable**") %>%
+  add_overall() %>%
+  modify_footnote(
+    update = all_stat_cols() ~ "Median (IQR) or Frequency (%)"
+  ) %>%
+  bold_labels() %>% 
+  modify_spanning_header(c(stat_1, stat_2) ~ "**HES Linkage**") %>%
+  as_flex_table()
+
+# Row percentages 
+hes_linkage_first_entry <- first_entry_tbl_nhs %>%
+  tbl_summary(
+    by = matched_hes, percent="row", 
+    statistic = all_continuous() ~ "{median} ({p25}, {p75})",
+    label = c(sex ~ "Sex", age ~ "Age", agegroups_new ~ "Age Group", 
+              length_cat ~ "Length in England", region ~ "Region", visa_type ~ "Entry Visa Type"),
+    digits = list(all_categorical() ~ c(0, 1)),
+    missing = "no"
+  ) %>%
+  add_p(pvalue_fun = ~style_pvalue(.x, digits = 1)) %>%
+  modify_header(all_stat_cols() ~ "**{level}**<br>N =  {n} ({style_percent(p)}%)") %>%
+  modify_header(label ~ "**Variable**") %>%
+  add_overall() %>%
+  modify_footnote(
+    update = all_stat_cols() ~ "Median (IQR) or Frequency (%)"
+  ) %>%
+  bold_labels() %>% 
+  modify_spanning_header(c(stat_1, stat_2) ~ "**HES Linkage**") %>%
+  as_flex_table()
+
+
+#### ============================================================== ####
+####  MIGRANT COHORT 1 (UNIQUE) BY LINKAGE ROUND TO HES/ONS ####
+#### ============================================================== ####
+#### Mean standardised differences for MM 
+
+## MM denominator
+
+# Column 
+mean_diff_hes <- first_entry_tbl %>%
+  tbl_summary(
+    by = matched_hes, 
+    percent="column", 
+    statistic = all_continuous() ~ "{median} ({p25}, {p75})",
+    label = c(sex ~ "Sex", age ~ "Age", agegroups_new ~ "Age Group", 
+              length_cat ~ "Length in England", region ~ "Region", visa_type ~ "Entry Visa Type"),
+    digits = list(all_categorical() ~ c(0, 1)),
+    missing = "no") %>%
+  add_overall() %>%
+  add_difference(everything() ~ "smd")
+
+# Row
+mean_diff_hes <- first_entry_tbl %>%
+  tbl_summary(
+    by = matched_hes, 
+    percent="row", 
+    statistic = all_continuous() ~ "{median} ({p25}, {p75})",
+    label = c(sex ~ "Sex", age ~ "Age", agegroups_new ~ "Age Group", 
+              length_cat ~ "Length in England", region ~ "Region", visa_type ~ "Entry Visa Type"),
+              digits = list(all_categorical() ~ c(0, 1)),
+              missing = "no") %>%
+  add_overall() %>%
+  add_difference(everything() ~ "smd")
+
+## MM-PDS denominator 
+
+mean_diff_hes_nhs <- first_entry_tbl_nhs %>%
+  tbl_summary(by = matched_hes, 
+              percent="column", 
+              statistic = all_continuous() ~ "{median} ({p25}, {p75})",
+              label = c(sex ~ "Sex", age ~ "Age", agegroups_new ~ "Age Group", 
+                        length_cat ~ "Length in England", region ~ "Region", visa_type ~ "Entry Visa Type"),
+              digits = list(all_categorical() ~ c(0, 1)),
+              #missing_text = "Missing",
+              missing = "no") %>%
+  add_overall() %>%
+  add_difference(everything() ~ "smd")
+
+# Row percentage
+mean_diff_hes_nhs <- first_entry_tbl_nhs %>%
+  tbl_summary(by = matched_hes, 
+              percent="row", 
+              statistic = all_continuous() ~ "{median} ({p25}, {p75})",
+              label = c(sex ~ "Sex", age ~ "Age", agegroups_new ~ "Age Group", 
+                        length_cat ~ "Length in England", region ~ "Region", visa_type ~ "Entry Visa Type"),
+              digits = list(all_categorical() ~ c(0, 1)),
+              #missing_text = "Missing",
+              missing = "no") %>%
+  add_overall() %>%
+  add_difference(everything() ~ "smd")
+
+
+#### ============================================================== ####
+#### PLOTS                                                          ####
+#### ============================================================== ####
+
+first_entry$matched_hes <- as.factor(first_entry$matched_hes)
+
+cbbPalette <- c("#000000", "#E69F00", "#56B4E9", "#009E73", "#F0E442", "#0072B2", "#D55E00", "#CC79A7")
+linked <- "#0072B2"
+unlinked <- "#009E73"
+
+## Plot for ENTIRE denominator 
+
+# Age 
+age <- first_entry %>%
+  select(matched_hes, agegroups_new) %>% 
+  filter(!agegroups_new == "Missing") %>%
+  mutate(agegroups_new = fct_recode(as.factor(agegroups_new), "<18 years old" = "0 to 17", "18-34 years old" = "18 to 34", "35-49 years old" = "35 to 49","50-64 years old" = "50 to 64", "65+ years old" = "65+")) %>%
+  group_by(matched_hes, agegroups_new) %>%
+  summarise(value = n(), .groups = "drop") %>%
+  group_by(agegroups_new) %>%
+  mutate(prop = 100*(value)/sum(value)) %>%
+  mutate(prop = round(prop, digits = 1)) %>%
+  filter(matched_hes == "Linked") %>%
+  rename(factor = agegroups_new) %>% 
+  mutate(var = "age") %>%
+  ungroup() %>%
+  add_row(matched_hes = "Linked", factor = "      ", value = 0, prop = 0, var = "age") 
+
+# Sex
+sex <- first_entry %>%
+  select(matched_hes, sex) %>% 
+  group_by(matched_hes, sex) %>%
+  summarise(value = n(), .groups = "drop") %>%
+  group_by(sex) %>%
+  mutate(prop = 100*(value)/sum(value)) %>%
+  mutate(prop = round(prop, digits = 1)) %>%
+  filter(matched_hes == "Linked") %>%
+  rename(factor = sex) %>% 
+  mutate(var = "sex") %>%
+  ungroup() %>%
+  add_row(matched_hes = "Linked", factor = "", value = 0, prop = 0, var = "sex") 
+
+sex$factor <- as.factor(sex$factor)
+sex$factor <- relevel(sex$factor, "")
+
+# Region
+region <- first_entry %>%
+  filter(!region == "Missing") %>%
+  select(matched_hes, region) %>% 
+  mutate(region = fct_recode(as.factor(region), "Region of origin East Asia" = "East Asia and Pacific", "Europe/Central Asia" = "Europe and Central Asia", "Latin America" = "Latin America and Caribbean", 
+                             "Middle East/North Africa" = "Middle East and North Africa",  
+                             "North America" = "North America", "South Asia" = "South Asia", "Sub-Saharan Africa" = "Sub-Saharan Africa")) %>%
+  group_by(matched_hes, region) %>%
+  summarise(value = n(), .groups = "drop") %>%
+  group_by(region) %>%
+  mutate(prop = 100*(value)/sum(value)) %>%
+  mutate(prop = round(prop, digits = 1)) %>%
+  filter(matched_hes == "Linked") %>%
+  rename(factor = region) %>% 
+  mutate(var = "region") %>%
+  ungroup() %>%
+  add_row(matched_hes = "Linked", factor = " ", value = 0, prop = 0, var = "region") 
+
+region$factor <- as.factor(region$factor)
+region$factor <- relevel(region$factor, " ")
+
+# Visa
+visa <- first_entry %>%
+  select(matched_hes, visa_type) %>% 
+  mutate(visa_type = fct_recode(as.factor(visa_type), "Family Visa" = "Family Reunion", "Settlement Visa" = "Settlement and Dependents", 
+                                "Refugee Visa" = "Refugee", "Student Visa" = "Students", "Work Visa" = "Work", "Working Holiday Visa" = "Working Holiday Maker", 
+                                "Other Visa" = "Other", "Missing Visa" = "Missing")) %>%
+  group_by(matched_hes, visa_type) %>%
+  summarise(value = n(), .groups = "drop") %>%
+  group_by(visa_type) %>%
+  mutate(prop = 100*(value)/sum(value)) %>%
+  mutate(prop = round(prop, digits = 1)) %>%
+  filter(matched_hes == "Linked") %>%
+  rename(factor = visa_type) %>% 
+  mutate(var = "visa_type") %>%
+  ungroup() %>%
+  add_row(matched_hes = "Linked", factor = "  ", value = 0, prop = 0, var = "visa_type") 
+
+visa$factor <- as.factor(visa$factor)
+visa$factor <- relevel(visa$factor, "  ")
+
+# Length 
+length <- first_entry %>%
+  select(matched_hes, length_cat) %>% 
+  mutate(length_cat = fct_recode(as.factor(length_cat), "<2 years since arrival" = "<2", "2-4 years" = "2 to 4", "5-7 years" = "5 to 7", ">8 years" = ">8")) %>%
+  group_by(matched_hes, length_cat) %>%
+  summarise(value = n(), .groups = "drop") %>%
+  group_by(length_cat) %>%
+  mutate(prop = 100*(value)/sum(value)) %>%
+  mutate(prop = round(prop, digits = 1)) %>%
+  filter(matched_hes == "Linked") %>%
+  rename(factor = length_cat) %>% 
+  mutate(var = "length") 
+
+
+df <- bind_rows(age, sex, visa, region, length)
+
+df$factor <- as.character(df$factor)
+df$factor <- factor(df$factor, levels = c("<18 years old", "18-34 years old", "35-49 years old", "50-64 years old", "65+ years old", "      ", "Female", "Male", "",
+                                          "Family Visa", "Settlement Visa", "Refugee Visa", "Student Visa", "Work Visa", "Working Holiday Visa", "Other Visa", "Missing Visa", "  ",
+                                          "Region of origin East Asia", "Europe/Central Asia", "Latin America", "Middle East/North Africa", "North America", "South Asia", "Sub-Saharan Africa", " ",
+                                          "<2 years since arrival", "2-4 years", "5-7 years", ">8 years" ))
+
+plot2 <- ggplot(data = df, aes(x= fct_rev(factor), y=prop, fill = matched_hes)) +
+  geom_bar(stat= "identity", position = position_dodge(width=0.5), width=0.3) +
+  scale_fill_manual("matched_hes", limits="Linked", values = linked)+
+  ylim(0,100) +
+  ylab("Percent linked (%)") +
+  # xlab("Length of time in England") +
+  coord_flip() +
+  theme_bw() +
+  ggtitle(" ") +
+  theme(plot.title = element_text(hjust = 0.5),
+        legend.position = 'none', 
+        legend.title=element_blank(), 
+        axis.title.x=element_blank(), 
+        legend.text = element_text(size=25), 
+        axis.text = element_text(size = 25), 
+        axis.title.y = element_blank())
+
+plot2
+#ggsave("hes_linkage.jpeg", width = 70, height = 45, dpi = 450, units = "cm", pointsize=20)
+
+### Plot for NHS / PDS denominator
+
+# Age 
+age <- first_entry_nhs %>%
+  select(matched_hes, agegroups_new) %>% 
+  filter(!agegroups_new == "Missing") %>%
+  mutate(agegroups_new = fct_recode(as.factor(agegroups_new), "<18 years old" = "0 to 17", "18-34 years old" = "18 to 34", "35-49 years old" = "35 to 49","50-64 years old" = "50 to 64", "65+ years old" = "65+")) %>%
+  group_by(matched_hes, agegroups_new) %>%
+  summarise(value = n(), .groups = "drop") %>%
+  group_by(agegroups_new) %>%
+  mutate(prop = 100*(value)/sum(value)) %>%
+  mutate(prop = round(prop, digits = 1)) %>%
+  filter(matched_hes == "Linked") %>%
+  rename(factor = agegroups_new) %>% 
+  mutate(var = "age") %>%
+  ungroup() %>%
+  add_row(matched_hes = "Linked", factor = "      ", value = 0, prop = 0, var = "age") 
+
+# Sex
+sex <- first_entry_nhs %>%
+  select(matched_hes, sex) %>% 
+  group_by(matched_hes, sex) %>%
+  summarise(value = n(), .groups = "drop") %>%
+  group_by(sex) %>%
+  mutate(prop = 100*(value)/sum(value)) %>%
+  mutate(prop = round(prop, digits = 1)) %>%
+  filter(matched_hes == "Linked") %>%
+  rename(factor = sex) %>% 
+  mutate(var = "sex") %>%
+  ungroup() %>%
+  add_row(matched_hes = "Linked", factor = "", value = 0, prop = 0, var = "sex") 
+
+sex$factor <- as.factor(sex$factor)
+sex$factor <- relevel(sex$factor, "")
+
+# Region
+region <- first_entry_nhs %>%
+  filter(!region == "Missing") %>%
+  select(matched_hes, region) %>% 
+  mutate(region = fct_recode(as.factor(region), "Region of origin East Asia" = "East Asia and Pacific", "Europe/Central Asia" = "Europe and Central Asia", "Latin America" = "Latin America and Caribbean", 
+                             "Middle East/North Africa" = "Middle East and North Africa",  
+                             "North America" = "North America", "South Asia" = "South Asia", "Sub-Saharan Africa" = "Sub-Saharan Africa")) %>%
+  group_by(matched_hes, region) %>%
+  summarise(value = n(), .groups = "drop") %>%
+  group_by(region) %>%
+  mutate(prop = 100*(value)/sum(value)) %>%
+  mutate(prop = round(prop, digits = 1)) %>%
+  filter(matched_hes == "Linked") %>%
+  rename(factor = region) %>% 
+  mutate(var = "region") %>%
+  ungroup() %>%
+  add_row(matched_hes = "Linked", factor = " ", value = 0, prop = 0, var = "region") 
+
+region$factor <- as.factor(region$factor)
+region$factor <- relevel(region$factor, " ")
+
+# Visa
+visa <- first_entry_nhs %>%
+  select(matched_hes, visa_type) %>% 
+  mutate(visa_type = fct_recode(as.factor(visa_type), "Family Visa" = "Family Reunion", "Settlement Visa" = "Settlement and Dependents", 
+                                "Refugee Visa" = "Refugee", "Student Visa" = "Students", "Work Visa" = "Work", "Working Holiday Visa" = "Working Holiday Maker", 
+                                "Other Visa" = "Other", "Missing Visa" = "Missing")) %>%
+  group_by(matched_hes, visa_type) %>%
+  summarise(value = n(), .groups = "drop") %>%
+  group_by(visa_type) %>%
+  mutate(prop = 100*(value)/sum(value)) %>%
+  mutate(prop = round(prop, digits = 1)) %>%
+  filter(matched_hes == "Linked") %>%
+  rename(factor = visa_type) %>% 
+  mutate(var = "visa_type") %>%
+  ungroup() %>%
+  add_row(matched_hes = "Linked", factor = "  ", value = 0, prop = 0, var = "visa_type") 
+
+visa$factor <- as.factor(visa$factor)
+visa$factor <- relevel(visa$factor, "  ")
+
+# Length 
+length <- first_entry_nhs %>%
+  select(matched_hes, length_cat) %>% 
+  mutate(length_cat = fct_recode(as.factor(length_cat), "<2 years since arrival" = "<2", "2-4 years" = "2 to 4", "5-7 years" = "5 to 7", ">8 years" = ">8")) %>%
+  group_by(matched_hes, length_cat) %>%
+  summarise(value = n(), .groups = "drop") %>%
+  group_by(length_cat) %>%
+  mutate(prop = 100*(value)/sum(value)) %>%
+  mutate(prop = round(prop, digits = 1)) %>%
+  filter(matched_hes == "Linked") %>%
+  rename(factor = length_cat) %>% 
+  mutate(var = "length") 
+
+
+df2 <- bind_rows(age, sex, visa, region, length)
+
+df2$factor <- as.character(df2$factor)
+df2$factor <- factor(df2$factor, levels = c("<18 years old", "18-34 years old", "35-49 years old", "50-64 years old", "65+ years old", "      ", "Female", "Male", "",
+                                          "Family Visa", "Settlement Visa", "Refugee Visa", "Student Visa", "Work Visa", "Working Holiday Visa", "Other Visa", "Missing Visa", "  ",
+                                          "Region of origin East Asia", "Europe/Central Asia", "Latin America", "Middle East/North Africa", "North America", "South Asia", "Sub-Saharan Africa", " ",
+                                          "<2 years since arrival", "2-4 years", "5-7 years", ">8 years" ))
+
+plot3 <- ggplot(data = df2, aes(x= fct_rev(factor), y=prop, fill = matched_hes)) +
+  geom_bar(stat= "identity", position = position_dodge(width=0.5), width=0.3) +
+  scale_fill_manual("matched", limits="Linked", values = linked)+
+  ylim(0,100) +
+  ylab("Percent linked (%)") +
+  # xlab("Length of time in England") +
+  coord_flip() +
+  theme_bw() +
+  ggtitle(" ") +
+  theme(plot.title = element_text(hjust = 0.5),
+        legend.position = 'none', 
+        legend.title=element_blank(), 
+        axis.title.x=element_blank(), 
+        legend.text = element_text(size=25), 
+        axis.text = element_text(size = 25), 
+        axis.title.y = element_blank())
+
+plot3
+
+
+p <- ggarrange(plot2, plot3, labels = c("A. HES Linkage for the Total Million Migrant Cohort", "B. HES Linkage for the Million Migrant Cohort with NHS Numbers"), font.label = list(size = 25, color = "black"), nrow = 1) 
+p <- p + theme(plot.title = element_text(size = 17))
+
+#ggsave("hes_linkage.jpeg", width = 70, height = 45, dpi = 450, units = "cm", pointsize=20)
+
+
+df <- df %>%
+  mutate(Denominator = "Total Million Migrant Cohort")
+
+df2 <- df2 %>%
+  mutate(Denominator = "Million Migrant Cohort with NHS numbers")
+
+total <- bind_rows(df, df2)
+
+total %>%
+  ggplot(aes(x= fct_rev(factor), y=prop, fill = Denominator)) +
+  geom_bar(stat= "identity", position = position_dodge(width=0.8), width=0.5) +
+  scale_fill_manual("Denominator", limits=c("Total Million Migrant Cohort", "Million Migrant Cohort with NHS numbers"), values = c(unlinked, linked))+
+  ylim(0,100) +
+  ylab("Percent (%) linked to at least one hospital record in England") +
+  #xlab("Length of time in England") +
+  coord_flip() +
+  theme_bw() +
+  ggtitle(" ") +
+  theme(plot.title = element_text(hjust = 0.5),
+        legend.position = c(.70, .75),
+        legend.justification = c("left", "bottom"),
+        #legend.position = 'bottom',
+        #legend.justification = "right",
+        #legend.box.spacing = unit(20, "pt"),
+        legend.title=element_text(size = 25), 
+        axis.title.x=element_text(size = 30), 
+        legend.text = element_text(size=20), 
+        axis.text = element_text(size = 35), 
+        axis.title.y = element_blank())
+
+ggsave("hes_linkage.jpeg", width = 70, height = 45, dpi = 450, units = "cm", pointsize=20)
+
+
+#### ============================================================== ####
+####  MIGRANT COHORT 1 (UNIQUE) BY LINKAGE ROUND TO HES/ONS ####
+#### ============================================================== ####
+#### Multi-variable linkage
+
+first_entry_tbl$matched_hes[first_entry_tbl$matched_hes=="Not Linked"] <- 0
+first_entry_tbl$matched_hes[first_entry_tbl$matched_hes=="Linked"] <- 1
+first_entry_tbl$matched_hes <- as.numeric(first_entry_tbl$matched_hes)
+
+first_entry_tbl <- first_entry_tbl %>%
+  filter(visa_type != "Missing") %>% 
+  filter(region != "Missing") %>%
+  filter(agegroups_new != "Missing") %>%
+  droplevels()
+
+first_entry_tbl$sex <- as.factor(first_entry_tbl$sex)
+summary(as.factor(first_entry_tbl$sex))
+summary(as.factor(first_entry_tbl$agegroups_new))
+summary(as.factor(first_entry_tbl$visa_type))
+summary(as.factor(first_entry_tbl$region))
+summary(first_entry_tbl$matched_hes)
+
+first_entry_tbl <- within(first_entry_tbl, visa_type <- relevel(factor(visa_type), ref = "Settlement and Dependents"))
+first_entry_tbl$visa_type <- relevel(first_entry_tbl$visa_type, "Settlement and Dependents")
+
+
+## Visa 
+
+model1 <- glm(matched_hes ~ sex + agegroups_new + visa_type, family = binomial(), data = first_entry_tbl) 
+
+model_table1 <- model1 %>%
+  tbl_regression(exponentiate = TRUE, 
+                 pvalue_fun = ~style_pvalue(.x, digits = 1))%>%
+  add_n(location = "level")
+
+# Region 
+
+model2 <- glm(matched_hes ~ sex + agegroups_new + region, family = binomial(), data = first_entry_tbl) 
+
+model_table2 <- model2 %>%
+  tbl_regression(exponentiate = TRUE, 
+                 pvalue_fun = ~style_pvalue(.x, digits = 1))%>%
+  add_n(location = "level")
+
+
+# # test <- first_entry_tbl %>%
+#   select(region, visa_type)
+# 
+# options(scipen = 999)
+# x <- table(test$region, test$visa_type)
+# ftable(x)
+# prop.table(x, 2)
+
+# Length in England
+
+model3 <- glm(matched_hes ~ sex + agegroups_new + length_cat, family = binomial(), data = first_entry_tbl) 
+
+model_table3 <- model3 %>%
+  tbl_regression(exponentiate = TRUE, 
+                 pvalue_fun = ~style_pvalue(.x, digits = 1))%>%
+  add_n(location = "level")
+
+#### Regressions for MM-PDS cohort
+
+first_entry_tbl_nhs$matched_hes[first_entry_tbl_nhs$matched_hes=="Not Linked"] <- 0
+first_entry_tbl_nhs$matched_hes[first_entry_tbl_nhs$matched_hes=="Linked"] <- 1
+first_entry_tbl_nhs$matched_hes <- as.numeric(first_entry_tbl_nhs$matched_hes)
+
+first_entry_tbl_nhs <- first_entry_tbl_nhs %>%
+  filter(visa_type != "Missing") %>% 
+  filter(region != "Missing") %>%
+  filter(agegroups_new != "Missing") %>%
+  droplevels()
+
+first_entry_tbl_nhs$sex <- as.factor(first_entry_tbl_nhs$sex)
+summary(as.factor(first_entry_tbl_nhs$sex))
+summary(as.factor(first_entry_tbl_nhs$agegroups_new))
+summary(as.factor(first_entry_tbl_nhs$visa_type))
+summary(as.factor(first_entry_tbl_nhs$region))
+summary(first_entry_tbl_nhs$matched_hes)
+
+first_entry_tbl_nhs$visa_type <- relevel(first_entry_tbl_nhs$visa_type, "Settlement and Dependents")
+
+
+## Visa 
+
+model1 <- glm(matched_hes ~ sex + agegroups_new + visa_type, family = binomial(), data = first_entry_tbl_nhs) 
+
+model_table1 <- model1 %>%
+  tbl_regression(exponentiate = TRUE, 
+                 pvalue_fun = ~style_pvalue(.x, digits = 1))%>%
+  add_n(location = "level")
+
+# Region 
+
+model2 <- glm(matched_hes ~ sex + agegroups_new + region, family = binomial(), data = first_entry_tbl_nhs) 
+
+model_table2 <- model2 %>%
+  tbl_regression(exponentiate = TRUE, 
+                 pvalue_fun = ~style_pvalue(.x, digits = 1))%>%
+  add_n(location = "level")
+
+# Length of time
+
+model3 <- glm(matched_hes ~ sex + agegroups_new + length_cat, family = binomial(), data = first_entry_tbl_nhs) 
+
+model_table3 <- model3 %>%
+  tbl_regression(exponentiate = TRUE, 
+                 pvalue_fun = ~style_pvalue(.x, digits = 1))%>%
+  add_n(location = "level")
