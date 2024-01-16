@@ -3,8 +3,7 @@
 --to the HES OP dataset
 -- https://digital.nhs.uk/binaries/content/assets/legacy/pdf/r/q/hes-ons_linked_mortality_data_guide.pdf using page 8 a variable named match rank was added
 --
---Author: Sacha Wyke
---QA:Tbc
+--Author: Office for Health Improvement and Disparities (formerly Public Health England) with edits by Rachel Burns
 --date 21/07/2021
 /*************************************************************/
 -- table1 = migrant data folder
