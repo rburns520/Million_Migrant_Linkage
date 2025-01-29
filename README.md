@@ -13,7 +13,9 @@ Results: Of the 1,799,307 unique migrant records, 1,134,007 (63%) linked to PDS 
 Conclusion: This linked dataset represents a unique opportunity to explore healthcare use in migrants. However, lower linkage rates disproportionately affected individuals on shorter-term visas so future studies of these groups may be more biased as a result. Increasing the quality and completeness of identifiers recorded in administrative data could improve data linkage quality.
 
 # Citation for paper
+Burns R, Wyke S, Boukari Y, Katikireddi SV, Zenner D, Campos-Matos I, Harron K, Aldridge RW. Linking migration and hospital data in England: linkage process and evaluation of bias. International Journal of Population Data Science. 2024;9(1).
 
 # Link for paper
+https://www.ijpds.org/article/view/2181
 
 # Citation for code
